@@ -71,3 +71,6 @@ cscope.*
 
 # helm packaged chart
 /charts/*/*.tgz
+
+# add testcoverage file
+profile.cov
