@@ -18,10 +18,26 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
-        uses: actions/checkout@v2 
+        uses: actions/checkout@v2
       - name: Build Test
         run: |
           make smb-windows
       - name: Run Windows Unit Tests
         run: |
+          # start the CSI Proxy before running tests on windows
+          # TODO: (boddumanohar) CSI-Proxy team are not building the csi-proxy.exe. Currenly I am using a binary that I built. In future we should change to offcial repo.
+          Start-Job -Name CSIProx -ScriptBlock {
+            Invoke-WebRequest https://github.com/boddumanohar/csi-proxy/releases/download/v0.2.1/csi-proxy.zip -OutFile csi-proxy.zip;
+            Expand-Archive .\csi-proxy.zip -DestinationPath .;
+            .\csi-proxy.exe -v 9
+          };
+
+          # wait for the CSI Proxy to Come up
+          Start-Sleep -Seconds 30;
+
+          # Print all the named pipes to make sure that CSI-Proxy's named-pipes are created. ()
+          Write-Output "getting named pipes"
+          [System.IO.Directory]::GetFiles("\\.\\pipe\\")
+
+          # Start the tests
           go test -v -race ./pkg/...

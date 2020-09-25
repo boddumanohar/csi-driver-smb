@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"syscall"
 	"testing"
 
+	"github.com/kubernetes-csi/csi-driver-smb/pkg/mounter"
 	"github.com/kubernetes-csi/csi-driver-smb/test/utils/testutil"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -198,109 +200,156 @@ func TestNodeExpandVolume(t *testing.T) {
 }
 
 func TestNodePublishVolume(t *testing.T) {
-	skipIfTestingOnWindows(t)
 	volumeCap := csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER}
-	errorMountSource := "./error_mount_source"
-	alreadyMountedTarget := "./false_is_likely_exist_target"
-	smbFile := "./smb.go"
-	sourceTest := "./source_test"
-	targetTest := "./target_test"
 
+	errorMountSource := map[string]string{
+		"linux":   "./error_mount_source",
+		"windows": "C:\\var\\lib\\kubelet\\error_mount_source",
+	}
+	alreadyMountedTarget := map[string]string{
+		"linux":   "./false_is_likely_exist_target",
+		"windows": "C:\\var\\lib\\kubelet\\false_is_likely_exist_target",
+	}
+	smbFile := map[string]string{
+		"linux":   "./smb.go",
+		"windows": "C:\\var\\lib\\kubelet\\smb.go",
+	}
+	sourceTest := map[string]string{
+		"linux":   "./source_test",
+		"windows": "C:\\var\\lib\\kubelet\\source_test",
+	}
+	targetTest := map[string]string{
+		"linux":   "./target",
+		"windows": "C:\\var\\lib\\kubelet\\target_test",
+	}
+
+	platform := "linux"
+	if runtime.GOOS == "windows" {
+		platform = "windows"
+	}
+
+	fmt.Println(platform)
 	tests := []struct {
-		desc        string
-		req         csi.NodePublishVolumeRequest
-		expectedErr error
+		desc               string
+		req                csi.NodePublishVolumeRequest
+		expectedErrLinux   error
+		expectedErrWindows error
 	}{
 		{
-			desc:        "[Error] Volume capabilities missing",
-			req:         csi.NodePublishVolumeRequest{},
-			expectedErr: status.Error(codes.InvalidArgument, "Volume capability missing in request"),
+			desc:               "[Error] Volume capabilities missing",
+			req:                csi.NodePublishVolumeRequest{},
+			expectedErrWindows: status.Error(codes.InvalidArgument, "Volume capability missing in request"),
+			expectedErrLinux:   status.Error(codes.InvalidArgument, "Volume capability missing in request"),
 		},
 		{
-			desc:        "[Error] Volume ID missing",
-			req:         csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap}},
-			expectedErr: status.Error(codes.InvalidArgument, "Volume ID missing in request"),
+			desc:               "[Error] Volume ID missing",
+			req:                csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap}},
+			expectedErrWindows: status.Error(codes.InvalidArgument, "Volume ID missing in request"),
+			expectedErrLinux:   status.Error(codes.InvalidArgument, "Volume ID missing in request"),
 		},
 		{
 			desc: "[Error] Target path missing",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId: "vol_1"},
-			expectedErr: status.Error(codes.InvalidArgument, "Target path not provided"),
+			expectedErrWindows: status.Error(codes.InvalidArgument, "Target path not provided"),
+			expectedErrLinux:   status.Error(codes.InvalidArgument, "Target path not provided"),
 		},
 		{
 			desc: "[Error] Stage target path missing",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:   "vol_1",
-				TargetPath: targetTest},
-			expectedErr: status.Error(codes.InvalidArgument, "Staging target not provided"),
+				TargetPath: targetTest[platform]},
+			expectedErrWindows: status.Error(codes.InvalidArgument, "Staging target not provided"),
+			expectedErrLinux:   status.Error(codes.InvalidArgument, "Staging target not provided"),
 		},
 		{
 			desc: "[Error] Not a directory",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:          "vol_1",
-				TargetPath:        smbFile,
-				StagingTargetPath: sourceTest,
+				TargetPath:        smbFile[platform],
+				StagingTargetPath: sourceTest[platform],
 				Readonly:          true},
-			expectedErr: status.Errorf(codes.Internal, "Could not mount target \"./smb.go\": mkdir ./smb.go: not a directory"),
+			expectedErrWindows: nil,
+			expectedErrLinux:   status.Errorf(codes.Internal, "Could not mount target \"./smb.go\": mkdir ./smb.go: not a directory"),
 		},
 		{
 			desc: "[Error] Mount error mocked by Mount",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:          "vol_1",
-				TargetPath:        targetTest,
-				StagingTargetPath: errorMountSource,
+				TargetPath:        targetTest[platform],
+				StagingTargetPath: errorMountSource[platform],
 				Readonly:          true},
-			expectedErr: status.Errorf(codes.Internal, "Could not mount \"./error_mount_source\" at \"./target_test\": fake Mount: source error"),
+			expectedErrWindows: nil,
+			expectedErrLinux:   status.Errorf(codes.Internal, "Could not mount \"./error_mount_source\" at \"./target_test\": fake Mount: source error"),
 		},
 		{
 			desc: "[Success] Valid request read only",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:          "vol_1",
-				TargetPath:        targetTest,
-				StagingTargetPath: sourceTest,
+				TargetPath:        targetTest[platform],
+				StagingTargetPath: sourceTest[platform],
 				Readonly:          true},
-			expectedErr: nil,
+			expectedErrWindows: nil,
+			expectedErrLinux:   nil,
 		},
 		{
 			desc: "[Success] Valid request already mounted",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:          "vol_1",
-				TargetPath:        alreadyMountedTarget,
-				StagingTargetPath: sourceTest,
+				TargetPath:        alreadyMountedTarget[platform],
+				StagingTargetPath: sourceTest[platform],
 				Readonly:          true},
-			expectedErr: nil,
+			expectedErrWindows: nil,
+			expectedErrLinux:   nil,
 		},
 		{
 			desc: "[Success] Valid request",
 			req: csi.NodePublishVolumeRequest{VolumeCapability: &csi.VolumeCapability{AccessMode: &volumeCap},
 				VolumeId:          "vol_1",
-				TargetPath:        targetTest,
-				StagingTargetPath: sourceTest,
+				TargetPath:        targetTest[platform],
+				StagingTargetPath: sourceTest[platform],
 				Readonly:          true},
-			expectedErr: nil,
+			expectedErrWindows: nil,
+			expectedErrLinux:   nil,
 		},
 	}
 
 	// Setup
-	_ = makeDir(alreadyMountedTarget)
+	_ = makeDir(alreadyMountedTarget[platform])
 	d := NewFakeDriver()
-	fakeMounter := &fakeMounter{}
-	d.mounter = &mount.SafeFormatAndMount{
-		Interface: fakeMounter,
+
+	if runtime.GOOS == "windows" {
+		csiProxyMounter, err := mounter.NewSafeMounter()
+		assert.NoError(t, err)
+		d.mounter = &mount.SafeFormatAndMount{
+			Interface: csiProxyMounter.Interface,
+		}
+	} else {
+		fakeMounter := &fakeMounter{}
+		d.mounter = &mount.SafeFormatAndMount{
+			Interface: fakeMounter,
+		}
 	}
 
 	for _, test := range tests {
 		_, err := d.NodePublishVolume(context.Background(), &test.req)
-		if !reflect.DeepEqual(err, test.expectedErr) {
-			t.Errorf("test case: %s, Unexpected error: %v", test.desc, err)
+		expectedErr := test.expectedErrLinux
+		if runtime.GOOS == "windows" {
+			expectedErr = test.expectedErrWindows
+		}
+		if !reflect.DeepEqual(err, expectedErr) {
+			t.Errorf("test case: %s, Expected Error: %v \n Unexpected error: %v", test.desc, expectedErr, err)
 		}
 	}
 
 	// Clean up
-	err := os.RemoveAll(targetTest)
+	err := os.RemoveAll(targetTest[platform])
 	assert.NoError(t, err)
-	err = os.RemoveAll(alreadyMountedTarget)
+	err = os.RemoveAll(alreadyMountedTarget[platform])
 	assert.NoError(t, err)
+	err = os.RemoveAll(smbFile[platform])
+	assert.NoError(t, err)
+	err = os.RemoveAll(sourceTest[platform])
 }
 
 func TestNodeUnpublishVolume(t *testing.T) {
@@ -347,6 +396,7 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	for _, test := range tests {
 		_, err := d.NodeUnpublishVolume(context.Background(), &test.req)
 		if !reflect.DeepEqual(err, test.expectedErr) {
+			fmt.Println(err)
 			t.Errorf("test case: %s, Unexpected error: %v", test.desc, err)
 		}
 	}
