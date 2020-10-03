@@ -46,6 +46,12 @@ jobs:
         make
         make sanity-test
 
+    - name: e2e tests
+      run: |
+        make deploy-kind
+        make
+        make e2e-test
+
     - name: Send coverage
       env:
         COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
